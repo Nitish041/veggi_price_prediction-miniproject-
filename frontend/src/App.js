@@ -3,6 +3,7 @@ import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-d
 import Login from './pages/Login';
 import Home from './pages/Home';
 import Prediction from './pages/Prediction';
+import Landing from './pages/Landing';
 import Navbar from './components/Navbar';
 import './App.css';
 
@@ -29,17 +30,26 @@ function App() {
       {token && <Navbar user={user} onLogout={handleLogout} />}
       <Routes>
         <Route 
-          path="/login" 
-          element={token ? <Navigate to="/" /> : <Login onLogin={handleLogin} />} 
+          path="/login"
+          element={token ? <Navigate to="/dashboard" replace /> : <Login onLogin={handleLogin} />}
         />
-        <Route 
-          path="/" 
-          element={token ? <Home /> : <Navigate to="/login" />} 
+        <Route
+          path="/register"
+          element={token ? <Navigate to="/dashboard" replace /> : <Login key="register" onLogin={handleLogin} initialMode="register" />}
         />
-        <Route 
-          path="/prediction" 
-          element={token ? <Prediction /> : <Navigate to="/login" />} 
+        <Route
+          path="/"
+          element={token ? <Home /> : <Landing />}
         />
+        <Route
+          path="/dashboard"
+          element={token ? <Home /> : <Navigate to="/login" replace />}
+        />
+        <Route
+          path="/prediction"
+          element={token ? <Prediction /> : <Navigate to="/login" replace />}
+        />
+        <Route path="*" element={<Navigate to={token ? '/dashboard' : '/'} replace />} />
       </Routes>
     </Router>
   );

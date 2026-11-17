@@ -4,13 +4,13 @@ import { authAPI } from '../api/client';
 import { Eye, EyeOff, AlertCircle } from 'lucide-react';
 import './Login.css';
 
-function Login({ onLogin }) {
+function Login({ onLogin, initialMode = 'login' }) {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
-  const [isRegister, setIsRegister] = useState(false);
+  const [isRegister, setIsRegister] = useState(initialMode === 'register');
   const navigate = useNavigate();
 
   const handleSubmit = async (e) => {
@@ -24,10 +24,11 @@ function Login({ onLogin }) {
         setError('');
         setIsRegister(false);
         setPassword('');
+        navigate('/login', { replace: true });
       } else {
         const response = await authAPI.login(email, password);
         onLogin(response.data.access_token, response.data.email);
-        navigate('/');
+        navigate('/dashboard');
       }
     } catch (err) {
       setError(err.response?.data?.message || 'An error occurred');
@@ -103,6 +104,7 @@ function Login({ onLogin }) {
                     setIsRegister(false);
                     setError('');
                     setPassword('');
+                    navigate('/login');
                   }}
                 >
                   Login here
@@ -120,6 +122,7 @@ function Login({ onLogin }) {
                     setIsRegister(true);
                     setError('');
                     setPassword('');
+                    navigate('/register');
                   }}
                 >
                   Register here

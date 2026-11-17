@@ -188,7 +188,7 @@ npm run build
 Use `backend` as the Root Directory, `pip install -r requirements.txt` as the Build Command, and `gunicorn app:app --bind 0.0.0.0:$PORT` as the Start Command. Set `JWT_SECRET_KEY` in Render's environment settings. Add weather provider keys there if live weather data is needed.
 
 ### Frontend (Vercel)
-
+   
 Set `frontend` as the Root Directory and add `REACT_APP_API_BASE_URL` as an environment variable with the deployed backend URL ending in `/api` (for example, `https://your-service.onrender.com/api`). Redeploy after setting it.
 
 ### Local Backend (alternative)

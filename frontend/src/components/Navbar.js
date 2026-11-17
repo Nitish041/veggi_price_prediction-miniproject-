@@ -22,7 +22,7 @@ function Navbar({ user, onLogout }) {
         <div className="navbar-menu">
           <button
             className="nav-link"
-            onClick={() => navigate('/')}
+            onClick={() => navigate('/dashboard')}
             title="Dashboard"
           >
             <HomeIcon size={20} />
