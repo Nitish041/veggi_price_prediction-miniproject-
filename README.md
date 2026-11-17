@@ -80,10 +80,16 @@ new mini/
 ```bash
 cd backend
 pip install -r requirements.txt
+```
+
+Set `JWT_SECRET_KEY` before starting the backend. For local PowerShell, generate a temporary key with:
+
+```powershell
+$env:JWT_SECRET_KEY = python -c "import secrets; print(secrets.token_hex(32))"
 python app.py
 ```
 
-The backend will run on `http://localhost:5000`
+The backend will run on `http://localhost:5000`. Optional weather keys are `OPENWEATHERMAP_API_KEY` and `WEATHERAPI_KEY`.
 
 ### 2. Frontend Setup
 
@@ -146,11 +152,6 @@ Delhi,Tomato,15,2,Winter,8,32
 - `GET /api/analytics/seasonal-availability?vegetable=Tomato` - Seasonal data
 - `GET /api/analytics/monthly-availability?vegetable=Tomato` - Monthly availability with scarcity factors
 
-## Demo Credentials
-
-- Email: `demo@example.com`
-- Password: `demo123`
-
 ## Machine Learning Model
 
 The app uses a **Random Forest Regressor** with the following configuration:
@@ -182,11 +183,17 @@ The app uses a **Random Forest Regressor** with the following configuration:
 npm run build
 ```
 
-### Backend (Heroku, Railway, Render)
-```bash
-pip install -r requirements.txt
-python app.py
-```
+### Backend (Render)
+
+Use `backend` as the Root Directory, `pip install -r requirements.txt` as the Build Command, and `gunicorn app:app --bind 0.0.0.0:$PORT` as the Start Command. Set `JWT_SECRET_KEY` in Render's environment settings. Add weather provider keys there if live weather data is needed.
+
+### Frontend (Vercel)
+
+Set `frontend` as the Root Directory and add `REACT_APP_API_BASE_URL` as an environment variable with the deployed backend URL ending in `/api` (for example, `https://your-service.onrender.com/api`). Redeploy after setting it.
+
+### Local Backend (alternative)
+
+From the `backend` directory, set `JWT_SECRET_KEY` as shown above and run `python app.py`.
 
 ## Future Enhancements
 

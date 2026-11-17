@@ -9,13 +9,21 @@ import joblib
 import os
 from datetime import datetime
 import requests
-import os
+from pathlib import Path
+import csv
 
 app = Flask(__name__)
-app.config['JWT_SECRET_KEY'] = 'your_secret_key_here_change_in_production'
+jwt_secret_key = os.environ.get('JWT_SECRET_KEY')
+if not jwt_secret_key:
+    raise RuntimeError('JWT_SECRET_KEY must be set before starting the application')
+app.config['JWT_SECRET_KEY'] = jwt_secret_key
 jwt = JWTManager(app)
 CORS(app)
 
+BACKEND_DIR = Path(__file__).resolve().parent
+DATASET_PATH = BACKEND_DIR / 'data' / 'vegetable_prices.csv'
+MODEL_DIR = BACKEND_DIR / 'models'
+PRICE_COLUMNS = ['location', 'vegetable', 'date', 'month', 'season', 'rainfall', 'price']
 
 model = None
 location_encoder = None
@@ -23,23 +31,48 @@ vegetable_encoder = None
 season_encoder = None
 
 
-users = {
-    'user@example.com': 'password123',
-    'demo@example.com': 'demo123'
-}
+users = {}
+demo_user_email = os.environ.get('DEMO_USER_EMAIL')
+demo_user_password = os.environ.get('DEMO_USER_PASSWORD')
+if demo_user_email and demo_user_password:
+    users[demo_user_email] = demo_user_password
+
+
+def read_price_data():
+    """Read prices and tolerate legacy rows with an unused arrivals value."""
+    rows = []
+    with DATASET_PATH.open(newline='', encoding='utf-8-sig') as dataset_file:
+        reader = csv.reader(dataset_file)
+        headers = next(reader, [])
+        has_market_arrivals = 'market_arrivals' in headers
+        for line_number, row in enumerate(reader, start=2):
+            if has_market_arrivals:
+                if len(row) != len(headers):
+                    raise ValueError(f'Invalid price data row at line {line_number}')
+                record = dict(zip(headers, row))
+                rows.append([record[column] for column in PRICE_COLUMNS])
+            elif len(row) == len(PRICE_COLUMNS):
+                rows.append(row)
+            elif len(row) == len(PRICE_COLUMNS) + 1:
+                # Some existing rows include market_arrivals before the price.
+                rows.append(row[:len(PRICE_COLUMNS) - 1] + [row[-1]])
+            else:
+                raise ValueError(f'Invalid price data row at line {line_number}')
+    return pd.DataFrame(rows, columns=PRICE_COLUMNS)
+
 
 def load_model():
     """Load or train the model"""
     global model, location_encoder, vegetable_encoder, season_encoder
     
-    csv_path = 'data/vegetable_prices.csv'
+    csv_path = DATASET_PATH
     
     if not os.path.exists(csv_path):
         print("CSV file not found. Please create data/vegetable_prices.csv")
         return False
     
     try:
-        df = pd.read_csv(csv_path)
+        df = read_price_data()
         
      
         location_encoder = LabelEncoder()
@@ -64,10 +97,11 @@ def load_model():
         model.fit(X, y)
         
    
-        joblib.dump(location_encoder, 'models/location_encoder.pkl')
-        joblib.dump(vegetable_encoder, 'models/vegetable_encoder.pkl')
-        joblib.dump(season_encoder, 'models/season_encoder.pkl')
-        joblib.dump(model, 'models/model.pkl')
+        os.makedirs(MODEL_DIR, exist_ok=True)
+        joblib.dump(location_encoder, MODEL_DIR / 'location_encoder.pkl')
+        joblib.dump(vegetable_encoder, MODEL_DIR / 'vegetable_encoder.pkl')
+        joblib.dump(season_encoder, MODEL_DIR / 'season_encoder.pkl')
+        joblib.dump(model, MODEL_DIR / 'model.pkl')
         
         print("Model trained and saved successfully!")
         return True
@@ -80,23 +114,23 @@ def load_saved_model():
     global model, location_encoder, vegetable_encoder, season_encoder
     
     try:
-        model = joblib.load('models/model.pkl')
-        location_encoder = joblib.load('models/location_encoder.pkl')
-        vegetable_encoder = joblib.load('models/vegetable_encoder.pkl')
-        season_encoder = joblib.load('models/season_encoder.pkl')
+        model = joblib.load(MODEL_DIR / 'model.pkl')
+        location_encoder = joblib.load(MODEL_DIR / 'location_encoder.pkl')
+        vegetable_encoder = joblib.load(MODEL_DIR / 'vegetable_encoder.pkl')
+        season_encoder = joblib.load(MODEL_DIR / 'season_encoder.pkl')
        
         try:
             expected_features = 6  
             if hasattr(model, 'n_features_in_') and model.n_features_in_ != expected_features:
                 print(f"Loaded model expects {model.n_features_in_} features but expected {expected_features}. Retraining.")
-                return load_model()
+                return False
         except Exception:
             pass
         
-        csv_path = 'data/vegetable_prices.csv'
+        csv_path = DATASET_PATH
         try:
             if os.path.exists(csv_path):
-                df = pd.read_csv(csv_path)
+                df = read_price_data()
            
                 missing_loc = set(df['location'].unique()) - set(location_encoder.classes_)
                 missing_veg = set(df['vegetable'].unique()) - set(vegetable_encoder.classes_)
@@ -104,8 +138,7 @@ def load_saved_model():
 
                 if missing_loc or missing_veg or missing_sea:
                     print(f"Saved encoders missing labels, retraining model. Missing - loc:{missing_loc}, veg:{missing_veg}, sea:{missing_sea}")
-                
-                    return load_model()
+                    return False
         except Exception:
             
             pass
@@ -175,8 +208,11 @@ def get_weather():
             if weatherapi_key:
                 # WeatherAPI accepts q as city or 'lat,lon'
                 q = f"{lat},{lon}" if lat and lon else (loc or 'Mangalore')
-                url = f'http://api.weatherapi.com/v1/current.json?key={weatherapi_key}&q={q}'
-                resp = requests.get(url, timeout=5)
+                resp = requests.get(
+                    'https://api.weatherapi.com/v1/current.json',
+                    params={'key': weatherapi_key, 'q': q},
+                    timeout=5
+                )
                 provider_used = 'weatherapi'
                 upstream_status = resp.status_code
                 upstream_snippet = (resp.text or '')[:200]
@@ -215,21 +251,27 @@ def get_weather():
             pass
 
         # Fallback: OpenWeatherMap (existing behavior)
-        api_key = 'f908a83ab96fd93b86ca8a5e5a1f5c43'
-
         if not lat or not lon:
             # default to Mangalore
             lat, lon = coords['Mangalore']
 
-        url = f'https://api.openweathermap.org/data/2.5/weather?lat={lat}&lon={lon}&appid={api_key}&units=metric'
-        provider_used = provider_used or 'openweathermap'
-        print(f"[weather] OpenWeatherMap request to {url}")
-        response = requests.get(url, timeout=5)
-        provider_used = 'openweathermap'
-        upstream_status = response.status_code
-        upstream_snippet = (response.text or '')[:200]
+        api_key = os.environ.get('OPENWEATHERMAP_API_KEY')
+        response = None
+        if api_key:
+            response = requests.get(
+                'https://api.openweathermap.org/data/2.5/weather',
+                params={'lat': lat, 'lon': lon, 'appid': api_key, 'units': 'metric'},
+                timeout=5
+            )
+            provider_used = 'openweathermap'
+            upstream_status = response.status_code
+            upstream_snippet = (response.text or '')[:200]
+        else:
+            provider_used = 'openweathermap_unconfigured'
+            upstream_status = None
+            upstream_snippet = 'OPENWEATHERMAP_API_KEY is not configured'
 
-        if response.status_code == 200:
+        if response is not None and response.status_code == 200:
             data = response.json()
             if request.args.get('debug') == '1':
                 return jsonify({
@@ -293,7 +335,7 @@ def get_expected_rainfall():
         loc = request.args.get('location')
         month = int(request.args.get('month')) if request.args.get('month') else None
         # Try to use current weather first when no month or month==current month
-        df = pd.read_csv('data/vegetable_prices.csv')
+        df = read_price_data()
 
         # Map to coordinates if possible
         coords = {
@@ -314,20 +356,27 @@ def get_expected_rainfall():
             weatherapi_key = os.environ.get('WEATHERAPI_KEY')
             if weatherapi_key:
                 q = f"{lat},{lon}" if lat and lon else (loc or 'Mangalore')
-                url = f'http://api.weatherapi.com/v1/current.json?key={weatherapi_key}&q={q}'
-                resp = requests.get(url, timeout=5)
+                resp = requests.get(
+                    'https://api.weatherapi.com/v1/current.json',
+                    params={'key': weatherapi_key, 'q': q},
+                    timeout=5
+                )
                 if resp.status_code == 200:
                     data = resp.json()
                     rainfall = data.get('current', {}).get('precip_mm', 0)
                     return jsonify({'rainfall': rainfall}), 200
 
-            api_key = 'f908a83ab96fd93b86ca8a5e5a1f5c43'
-            url = f'https://api.openweathermap.org/data/2.5/weather?lat={lat}&lon={lon}&appid={api_key}&units=metric'
-            resp = requests.get(url, timeout=5)
-            if resp.status_code == 200:
-                data = resp.json()
-                rainfall = data.get('rain', {}).get('1h', 0)
-                return jsonify({'rainfall': rainfall}), 200
+            api_key = os.environ.get('OPENWEATHERMAP_API_KEY')
+            if api_key:
+                resp = requests.get(
+                    'https://api.openweathermap.org/data/2.5/weather',
+                    params={'lat': lat, 'lon': lon, 'appid': api_key, 'units': 'metric'},
+                    timeout=5
+                )
+                if resp.status_code == 200:
+                    data = resp.json()
+                    rainfall = data.get('rain', {}).get('1h', 0)
+                    return jsonify({'rainfall': rainfall}), 200
         except Exception:
             pass
 
@@ -357,11 +406,11 @@ def get_monthly_rainfall():
         if month is None:
             return jsonify({'rainfall': 0, 'error': 'month parameter required'}), 400
 
-        csv_path = 'data/vegetable_prices.csv'
+        csv_path = DATASET_PATH
         if not os.path.exists(csv_path):
             return jsonify({'rainfall': 0, 'error': 'data file not found'}), 200
 
-        df = pd.read_csv(csv_path)
+        df = read_price_data()
 
         md = df
         if loc:
@@ -384,7 +433,7 @@ def get_monthly_rainfall():
 def get_locations():
     """Get available locations"""
     try:
-        df = pd.read_csv('data/vegetable_prices.csv')
+        df = read_price_data()
         locations = sorted(df['location'].unique().tolist())
         return jsonify({'locations': locations}), 200
     except Exception:
@@ -395,7 +444,7 @@ def get_locations():
 def get_vegetables():
     """Get available vegetables (Mangalore region)"""
     try:
-        df = pd.read_csv('data/vegetable_prices.csv')
+        df = read_price_data()
         vegetables = sorted(df['vegetable'].unique().tolist())
         return jsonify({'vegetables': vegetables}), 200
     except Exception:
@@ -457,7 +506,7 @@ def predict():
 def get_price_trend():
     """Get price trend for a vegetable in a location"""
     try:
-        df = pd.read_csv('data/vegetable_prices.csv')
+        df = read_price_data()
         vegetable = request.args.get('vegetable')
         location = request.args.get('location', 'Mangalore')
 
@@ -495,7 +544,7 @@ def get_avg_arrivals():
 def get_seasonal_availability():
     """Get vegetable availability by season"""
     try:
-        df = pd.read_csv('data/vegetable_prices.csv')
+        df = read_price_data()
         vegetable = request.args.get('vegetable')
         location = request.args.get('location', 'Mangalore')
         
@@ -528,7 +577,7 @@ def get_seasonal_availability():
 def get_monthly_availability():
     """Get vegetable availability by month with multiplication factor"""
     try:
-        df = pd.read_csv('data/vegetable_prices.csv')
+        df = read_price_data()
         vegetable = request.args.get('vegetable')
         
         filtered_df = df[df['vegetable'] == vegetable]
@@ -570,11 +619,16 @@ def health_check():
     return jsonify({'status': 'Backend is running'}), 200
 
 
-if __name__ == '__main__':
+def initialize_model():
+    """Load the saved model or train it once for this application process."""
+    os.makedirs(MODEL_DIR, exist_ok=True)
+    if not load_saved_model() and not load_model():
+        raise RuntimeError(f'Could not load or train the model using {DATASET_PATH}')
 
-    os.makedirs('models', exist_ok=True)
-    
-    if not load_saved_model():
-        load_model()
-    
-    app.run(debug=True, port=5000)
+
+# Gunicorn imports this module, so initialize the model during application import.
+initialize_model()
+
+
+if __name__ == '__main__':
+    app.run(debug=True, port=5000, use_reloader=False)

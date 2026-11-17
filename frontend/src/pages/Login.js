@@ -125,9 +125,6 @@ function Login({ onLogin }) {
                   Register here
                 </button>
               </p>
-              <p className="demo-text">
-                Demo Credentials: demo@example.com / demo123
-              </p>
             </>
           )}
         </div>
