@@ -18,7 +18,7 @@ function Prediction() {
   const [season, setSeason] = useState('Winter');
   const [date, setDate] = useState(15);
   const [rainfall, setRainfall] = useState(10);
-  const [rainfallSource, setRainfallSource] = useState('unknown');
+  const [, setRainfallSource] = useState('unknown');
   const [prediction, setPrediction] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
